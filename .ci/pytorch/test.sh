@@ -177,13 +177,17 @@ if [[ "$BUILD_ENVIRONMENT" == *asan* ]]; then
     (cd test && ! get_exit_code python -c "import torch; torch._C._crash_if_aten_asan(3)")
 fi
 
+# The torch._C._crash_if_debug_asserts_fail() function should only fail if both of the following are true:
+# 1. The build is in debug mode
+# 2. THe value 424242 is passed in
+# This tests that the debug asserts are working correctly.
 if [[ "$BUILD_ENVIRONMENT" == *-debug* ]]; then
-    echo "We are in debug mode: $BUILD_ENVIRONMENT. Expect the python assertion to fail and return 1"
-    (cd test && ! get_exit_code python -c "import torch; torch._C._crash_if_debug_asserts_fail(1)")
+    echo "We are in debug mode: $BUILD_ENVIRONMENT. Expect the python assertion to fail"
+    (cd test && ! get_exit_code python -c "import torch; torch._C._crash_if_debug_asserts_fail(424242)")
 else
     # Noop when debug is disabled
-    echo "We are not in debug mode: $BUILD_ENVIRONMENT. Expect the assertion to pass and return 0"
-    (cd test && python -c "import torch; torch._C._crash_if_debug_asserts_fail(1)")
+    echo "We are not in debug mode: $BUILD_ENVIRONMENT. Expect the assertion to pass"
+    (cd test && python -c "import torch; torch._C._crash_if_debug_asserts_fail(424242)")
 fi
 
 if [[ "$BUILD_ENVIRONMENT" == *-tsan* ]]; then

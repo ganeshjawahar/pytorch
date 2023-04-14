@@ -220,12 +220,12 @@ static PyObject* THPModule_crashIfDebugAssertsFail(
     PyObject* arg) {
   THPUtils_assert(
       THPUtils_checkLong(arg),
-      "crash_if_debug_asserts_fail expects an int set to a nonzero value during debug builds, "
+      "crash_if_debug_asserts_fail expects an int, "
       "but got %s",
       THPUtils_typename(arg));
   int32_t x = THPUtils_unpackInt(arg);
 
-  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(x != 0)
+  TORCH_INTERNAL_ASSERT_DEBUG_ONLY(x != 424242, "Expect anything but 424242 as an input for debug builds");
 
   return THPUtils_packInt32(0);
 }
