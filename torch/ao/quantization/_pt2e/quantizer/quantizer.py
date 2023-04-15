@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Callable, List, NamedTuple, Optional
 
 import torch
@@ -18,8 +18,17 @@ SUPPORTED_QSCHEMES = [
     torch.per_channel_affine_float_qparams,
 ]
 
+# TODO: add support for torch dtype in quant code base
+# this includes observers and prepare/convert code
+_TORCH_DTYPE_TO_QDTYPE = {
+    torch.int8: torch.qint8,
+    torch.uint8: torch.quint8,
+    torch.int32: torch.qint32,
+    torch.float16: torch.float16,
+}
 
-@dataclass(eq=True, frozen=True)
+
+@dataclass(eq=True)
 class QuantizationSpec:
     dtype: torch.dtype
     is_dynamic: bool = False
@@ -32,6 +41,20 @@ class QuantizationSpec:
         # check dtype is one of the supported types
         if self.dtype not in SUPPORTED_DTYPES:
             raise TypeError(f"Unsupported dtype {self.dtype}.")
+
+        if self.quant_max is None:
+            if self.dtype in [torch.float16, torch.float32, torch.float64]:
+                # Right now only tracking quant_min/max for int type
+                self.quant_max = None
+            else:
+                self.quant_max = torch.iinfo(self.dtype).max
+
+        if self.quant_min is None:
+            if self.dtype in [torch.float16, torch.float32, torch.float64]:
+                # Right now only tracking quant_min/max for int type
+                self.quant_min = None
+            else:
+                self.quant_min = torch.iinfo(self.dtype).min
 
         # quant_min must be less than quant_max
         if (
@@ -53,13 +76,19 @@ class QuantizationSpec:
             raise ValueError("Ch_axis is < 0.")
 
 
+def get_observer_kwargs(quant_spec: QuantizationSpec):
+    kwargs_dict = asdict(quant_spec)
+    kwargs_dict["dtype"] = _TORCH_DTYPE_TO_QDTYPE[quant_spec.dtype]
+    return kwargs_dict
+
+
 # In the absence of better name, just winging it with QuantizationConfig
 QuantizationConfig = NamedTuple(
     "QuantizationConfig",
     [
-        ("activation", QuantizationSpec),
-        ("weight", QuantizationSpec),
-        ("bias", QuantizationSpec),
+        ("activation", Optional[QuantizationSpec]),
+        ("weight", Optional[QuantizationSpec]),
+        ("bias", Optional[QuantizationSpec]),
     ],
 )
 
