@@ -15,9 +15,10 @@ from torch.testing._internal.inductor_utils import HAS_CPU, HAS_CUDA
 
 try:
     try:
-        from . import test_cpu_repro, test_torchinductor
+        from . import test_cpu_repro, test_mkldnn_pattern_matcher, test_torchinductor
     except ImportError:
         import test_cpu_repro
+        import test_mkldnn_pattern_matcher
         import test_torchinductor
 except unittest.SkipTest:
     if __name__ == "__main__":
@@ -63,7 +64,7 @@ def make_test_case(name, device, tests):
 
     fn.__name__ = test_name
     setattr(
-        CppWrapperTemplate if device == "cpu" else CudaWrapperTemplate, test_name, fn
+        CppWrapperTemplate if device != "cuda" else CudaWrapperTemplate, test_name, fn
     )
 
 
@@ -80,6 +81,13 @@ if RUN_CPU:
         BaseTest("test_bmm1"),
         BaseTest("test_bmm2"),
         BaseTest("test_cat"),  # alias
+        BaseTest(
+            "test_conv2d_binary", "", test_mkldnn_pattern_matcher.TestPaternMatcher()
+        ),
+        BaseTest(
+            "test_conv2d_unary", "", test_mkldnn_pattern_matcher.TestPaternMatcher()
+        ),
+        BaseTest("test_convolution1"),
         BaseTest("test_index_put_deterministic_fallback"),
         BaseTest("test_int_div", "", test_cpu_repro.CPUReproTests()),
         BaseTest("test_linear1"),

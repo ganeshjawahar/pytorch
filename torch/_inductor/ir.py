@@ -2697,6 +2697,7 @@ class ExternKernel(InputsKernel):
         kwargs = []
         if self.kwargs:
             if V.graph.cpp_wrapper:
+                # TODO: fix it for addmm_out and remove ordered_kwargs_for_cpp_kernel
                 # TODO: use native_functions.yaml as the ground truth
                 assert (
                     self.ordered_kwargs_for_cpp_kernel
@@ -2715,11 +2716,11 @@ class ExternKernel(InputsKernel):
         return kwargs
 
     def codegen_size_asserts(self, wrapper):
-        if config.size_asserts and not V.graph.cpp_wrapper:
+        if config.size_asserts:
             size = V.graph.wrapper_code.codegen_shape_tuple(self.get_size())
             stride = V.graph.wrapper_code.codegen_shape_tuple(self.get_stride())
             wrapper.writeline(
-                f"assert_size_stride({self.get_name()}, {size}, {stride})"
+                wrapper.generate_size_asserts(self.get_name(), size, stride)
             )
 
     def get_group_stride(self):
@@ -2792,6 +2793,7 @@ class ExternKernelOut(ExternKernel):
         kernel=None,
         cpp_kernel=None,
         ordered_kwargs_for_cpp_kernel=(),
+        cpp_constant_args=(),
     ):
         super().__init__(
             None, layout, self.unwrap_storage(inputs), constant_args, kwargs or {}
@@ -3267,21 +3269,41 @@ def _prepare_convolution_fusion_create(
 
 
 class ConvolutionUnary(ExternKernelAlloc):
-    kernel = "torch.ops.mkldnn._convolution_pointwise"
-
     def __init__(
         self,
         layout,
         inputs,
         constant_args=(),
-        kernel="torch.ops.mkldnn._convolution_pointwise",
     ):
-        super().__init__(layout, inputs, constant_args)
-        self.kernel = kernel
+        super().__init__(
+            layout,
+            inputs,
+            constant_args,
+            None,
+            kernel="torch.ops.mkldnn._convolution_pointwise",
+            cpp_kernel="mkldnn::_convolution_pointwise",
+        )
+        self.cpp_kernel_key = "convolution_pointwise"
+        self.cpp_op_schema = """
+            at::Tensor(
+                const at::Tensor& input_t,
+                const at::Tensor& weight_t,
+                const c10::optional<at::Tensor>& bias_opt,
+                at::IntArrayRef padding,
+                at::IntArrayRef stride,
+                at::IntArrayRef dilation,
+                int64_t groups,
+                c10::string_view attr,
+                torch::List<c10::optional<at::Scalar>> scalars,
+                c10::optional<c10::string_view> algorithm)"""
 
     def codegen(self, wrapper):
-        wrapper.writeline(
-            f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args())})"
+        wrapper.generate_fusion_ops_code(
+            self.get_name(),
+            self.kernel,
+            self.codegen_args(),
+            self.cpp_op_schema,
+            self.cpp_kernel_key,
         )
         if isinstance(self.layout, Layout):
             self.codegen_size_asserts(wrapper)
@@ -3300,35 +3322,60 @@ class ConvolutionUnary(ExternKernelAlloc):
         scalars,
         algorithm,
     ):
-        kernel = "torch.ops.mkldnn._convolution_pointwise"
         (inputs, constant_args, kernel_layout, _) = _prepare_convolution_fusion_create(
             cls, x, weight, bias, padding_, stride_, dilation_, groups
         )
-        constant_args = constant_args + [attr, scalars, algorithm]
+        constant_args = constant_args + [attr, scalars if scalars else [-1], algorithm]
         return ConvolutionUnary(
             layout=kernel_layout,
             inputs=inputs,
             constant_args=constant_args,
-            kernel=kernel,
         )
 
 
 class ConvolutionBinary(ExternKernelAlloc):
-    kernel = "torch.ops.mkldnn._convolution_pointwise.binary"
-
     def __init__(
         self,
         layout,
         inputs,
         constant_args=(),
-        kernel="torch.ops.mkldnn._convolution_pointwise.binary",
+        cpp_constant_args=(),
     ):
-        super().__init__(layout, inputs, constant_args)
-        self.kernel = kernel
+        super().__init__(
+            layout,
+            inputs,
+            constant_args,
+            None,
+            kernel="torch.ops.mkldnn._convolution_pointwise.binary",
+            cpp_kernel="mkldnn::_convolution_pointwise",
+        )
+        self.cpp_kernel_overlad_name = "binary"
+        self.cpp_kernel_key = "convolution_pointwise_binary"
+        self.cpp_op_schema = """
+            at::Tensor(
+                const at::Tensor& input_t,
+                const at::Tensor& other_t,
+                const at::Tensor& weight_t,
+                const c10::optional<at::Tensor>& bias_opt,
+                at::IntArrayRef padding,
+                at::IntArrayRef stride,
+                at::IntArrayRef dilation,
+                int64_t groups,
+                c10::string_view binary_attr,
+                c10::optional<at::Scalar> alpha,
+                c10::optional<c10::string_view> unary_attr,
+                torch::List<c10::optional<at::Scalar>> unary_scalars,
+                c10::optional<c10::string_view> unary_algorithm)"""
+        self.cpp_constant_args = cpp_constant_args
 
     def codegen(self, wrapper):
-        wrapper.writeline(
-            f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args())})"
+        wrapper.generate_fusion_ops_code(
+            self.get_name(),
+            self.kernel,
+            self.codegen_args(),
+            self.cpp_op_schema,
+            self.cpp_kernel_key,
+            self.cpp_kernel_overlad_name,
         )
         if isinstance(self.layout, Layout):
             self.codegen_size_asserts(wrapper)
@@ -3350,7 +3397,6 @@ class ConvolutionBinary(ExternKernelAlloc):
         unary_scalars: Optional[List],
         unary_algorithm: Optional[str],
     ):
-        kernel = "torch.ops.mkldnn._convolution_pointwise.binary"
         (
             inputs,
             constant_args,
@@ -3363,16 +3409,15 @@ class ConvolutionBinary(ExternKernelAlloc):
         inputs.insert(1, other)
         constant_args = constant_args + [
             binary_attr,
-            binary_alpha,
-            unary_attr,
-            unary_scalars,
-            unary_algorithm,
+            binary_alpha if binary_alpha else 1.0,
+            unary_attr if unary_attr else "none",
+            unary_scalars if unary_scalars else [-1],
+            unary_algorithm if unary_algorithm else "",
         ]
         return ConvolutionBinary(
             layout=kernel_layout,
             inputs=inputs,
             constant_args=constant_args,
-            kernel=kernel,
         )
 
 

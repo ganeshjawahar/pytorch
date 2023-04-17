@@ -523,6 +523,7 @@ class ExternKernelChoice:
         kernel,
         cpp_kernel=None,
         ordered_kwargs_for_cpp_kernel=(),
+        constant_args=(),
         *,
         name=None,
         has_out_variant=True,
@@ -534,6 +535,7 @@ class ExternKernelChoice:
         self.name = name
         self.cpp_kernel = cpp_kernel
         self.ordered_kwargs_for_cpp_kernel = ordered_kwargs_for_cpp_kernel
+        self.constant_args = constant_args
         self.has_out_variant = has_out_variant
         setattr(extern_kernels, name, kernel)
 
@@ -557,9 +559,14 @@ class ExternKernelChoice:
             pass
         return code_hash("-".join(parts))
 
-    def bind(self, input_nodes, layout, **kwargs):
+    def bind(self, input_nodes, layout, constant_args=(), **kwargs):
         return ExternKernelCaller(
-            self, input_nodes, layout, kwargs, has_out_variant=self.has_out_variant
+            self,
+            input_nodes,
+            layout,
+            constant_args,
+            kwargs,
+            has_out_variant=self.has_out_variant,
         )
 
 
@@ -630,12 +637,14 @@ class ExternKernelCaller(ChoiceCaller):
         choice: ExternKernelChoice,
         input_nodes,
         layout,
+        constant_args,
         kwargs=None,
         *,
         has_out_variant=True,
     ):
         super().__init__(choice.name, input_nodes, layout)
         self.choice = choice
+        self.constant_args = constant_args
         self.kwargs = kwargs or {}
         self.has_out_variant = has_out_variant
 
@@ -685,6 +694,7 @@ class ExternKernelCaller(ChoiceCaller):
                 kernel=self.choice.call_name(),
                 cpp_kernel=self.choice.cpp_kernel,
                 ordered_kwargs_for_cpp_kernel=self.choice.ordered_kwargs_for_cpp_kernel,
+                constant_args=self.constant_args,
                 kwargs=self.kwargs,
             )
         )
