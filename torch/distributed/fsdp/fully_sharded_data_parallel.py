@@ -2218,7 +2218,7 @@ class FullyShardedDataParallel(nn.Module):
             if clean_key not in self._ignored_param_names and \
                     not getattr(state_dict[fqn], "_has_been_cloned", False):
                 try:
-                    state_dict[fqn] = state_dict[fqn].clone().detach()
+                    state_dict[fqn] = state_dict[fqn].cpu().clone().detach()
                     state_dict[fqn]._has_been_cloned = True  # type: ignore[attr-defined]
                 except BaseException as e:
                     warnings.warn(
