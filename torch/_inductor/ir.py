@@ -3422,21 +3422,50 @@ class ConvolutionBinary(ExternKernelAlloc):
 
 
 class ConvolutionBinaryInplace(ExternKernelAlloc):
-    kernel = "torch.ops.mkldnn._convolution_pointwise_.binary"
-
     def __init__(
         self,
         kernel_layout,
         inputs,
         constant_args=(),
-        kernel="torch.ops.mkldnn._convolution_pointwise_.binary",
     ):
-        super().__init__(kernel_layout, inputs, constant_args)
-        self.kernel = kernel
+        # TODO: fix me
+        # Due to constrain of op.call, other (Tensor&) should be at input[0]
+        reordered_inputs = [inputs[1], inputs[0]] + inputs[2:]
+        super().__init__(
+            kernel_layout,
+            reordered_inputs,
+            constant_args,
+            None,
+            kernel="torch.ops.mkldnn._convolution_pointwise_.binary",
+            cpp_kernel="mkldnn::_convolution_pointwise_",
+        )
+        self.cpp_kernel_overlad_name = "binary"
+        self.cpp_kernel_key = "convolution_pointwise_binary_"
+        # TODO: op.call: input[0] should be at::Tensor&
+        self.cpp_op_schema = """
+            at::Tensor&(
+                at::Tensor& other_t,
+                const at::Tensor& input_t,
+                const at::Tensor& weight_t,
+                const c10::optional<at::Tensor>& bias_opt,
+                at::IntArrayRef padding,
+                at::IntArrayRef stride,
+                at::IntArrayRef dilation,
+                int64_t groups,
+                c10::string_view binary_attr,
+                c10::optional<at::Scalar> alpha,
+                c10::optional<c10::string_view> unary_attr,
+                torch::List<c10::optional<at::Scalar>> unary_scalars,
+                c10::optional<c10::string_view> unary_algorithm)"""
 
     def codegen(self, wrapper):
-        wrapper.writeline(
-            f"{self.get_name()} = {self.kernel}({', '.join(self.codegen_args())})"
+        wrapper.generate_fusion_ops_code(
+            self.get_name(),
+            self.kernel,
+            self.codegen_args(),
+            self.cpp_op_schema,
+            self.cpp_kernel_key,
+            self.cpp_kernel_overlad_name,
         )
 
     def get_mutation_names(self):
@@ -3460,7 +3489,6 @@ class ConvolutionBinaryInplace(ExternKernelAlloc):
         unary_scalars: Optional[List],
         unary_algorithm: Optional[str],
     ):
-        kernel = "torch.ops.mkldnn._convolution_pointwise_.binary"
         (inputs, constant_args, _, _) = _prepare_convolution_fusion_create(
             cls, x, weight, bias, padding_, stride_, dilation_, groups
         )
@@ -3469,16 +3497,15 @@ class ConvolutionBinaryInplace(ExternKernelAlloc):
         inputs.insert(1, other)
         constant_args = constant_args + [
             binary_attr,
-            binary_alpha,
-            unary_attr,
-            unary_scalars,
-            unary_algorithm,
+            binary_alpha if binary_alpha else 1.0,
+            unary_attr if unary_attr else "none",
+            unary_scalars if unary_scalars else [1],
+            unary_algorithm if unary_algorithm else "",
         ]
         return ConvolutionBinaryInplace(
             kernel_layout=MutationLayout(inputs[1]),
             inputs=inputs,
             constant_args=constant_args,
-            kernel=kernel,
         )
 
 
